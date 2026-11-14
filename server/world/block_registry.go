@@ -120,6 +120,9 @@ type BasicBlockRegistry struct {
 	hashes            *intintmap.Map
 	networkhashToRids map[uint32]uint32
 	ridsToNetworkhash []uint32
+	// hashCollisions are the block states whose network hash another state
+	// already had (see NetworkHashCollisions).
+	hashCollisions []string
 
 	// stateRuntimeIDs holds a map for looking up the runtime ID of a block by the stateHash it produces.
 	stateRuntimeIDs map[stateHash]uint32
@@ -410,10 +413,14 @@ func (br *BasicBlockRegistry) Finalize() {
 		var netHash uint32
 		netHash, networkHashScratch = networkBlockHash(name, properties, networkHashScratch)
 		if other, ok := br.networkhashToRids[netHash]; ok {
+			// Servers with thousands of custom block states can have two
+			// with the same hash. The hash then stands for the first one;
+			// failing here would make such a server unusable.
 			otherName, otherProperties := br.blocks[other].EncodeBlock()
-			panic(fmt.Sprintf("network block hash collision for (%s %+v) and (%s %+v)", name, properties, otherName, otherProperties))
+			br.hashCollisions = append(br.hashCollisions, fmt.Sprintf("%s %+v and %s %+v", name, properties, otherName, otherProperties))
+		} else {
+			br.networkhashToRids[netHash] = rid
 		}
-		br.networkhashToRids[netHash] = rid
 		br.ridsToNetworkhash[rid] = netHash
 	}
 	if !foundAir {
@@ -551,4 +558,11 @@ func (br *BasicBlockRegistry) Air() Block {
 		panic("BlockRegistry.Air: air runtime ID out of range")
 	}
 	return br.blocks[br.airRID]
+}
+
+// NetworkHashCollisions lists the block states Finalize found sharing a
+// network hash with another state. Such a hash stands for the state
+// registered first.
+func (br *BasicBlockRegistry) NetworkHashCollisions() []string {
+	return br.hashCollisions
 }
